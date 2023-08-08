@@ -2342,14 +2342,23 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
   if layout_out.implicit_dim == ImplicitDim.MINOR:
     raise NotImplementedError
   is_1d = layout_out.implicit_dim is not None
-  if layout_out.tiling != get_memref_tiling(op.base):
-    raise NotImplementedError
+  memref_tiling = get_memref_tiling(op.base)
+  if layout_out.tiling != memref_tiling:
+    # Now we can handle the case when tiling is (1, memref_tiling[1]).
+    # TODO(b/295393167): need to support strided load for bitwidth < 32.
+    if layout_out.bitwidth != 32 or layout_out.tiling != (1, memref_tiling[1]):
+      raise NotImplementedError
   # TODO(apaszke): Check that loads are from vmem!
   indices = [get_int_const(v, "vector.load index") for v in op.indices]
   for i, n, extent in zip(indices, ty.shape, memref_ty.shape):
     if i + n > extent:
       raise ValueError("reading out of bounds")
   *_, ss, _ = layout_out.implicit_shape(ty.shape)
+  sublane_stride = 1
+  # The stride of load should be the number of sublanes in memref tile when
+  # loaing a single sublane.
+  if layout_out.bitwidth == 32 and ss == 1:
+    sublane_stride = memref_tiling[0]
   tiling = TargetTuple(*layout_out.tiling)
   s, l = offsets = TargetTuple(*layout_out.offsets)
   check(l is not REPLICATED, "load replicated along lanes is unsupported")
@@ -2392,7 +2401,12 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
     if bounds.mask_varies_along(SUBLANES):
       assert s is not REPLICATED  # Replicated loads should never go OOB
       tile = tpu.LoadOp(
-          target_ty, op.base, indices_vs, bounds.get_sublane_mask())
+          target_ty,
+          op.base,
+          indices_vs,
+          bounds.get_sublane_mask(),
+          sublane_stride=sublane_stride,
+      )
     else:
       if load_map is not None:
         if layout_out.bitwidth != 32:
@@ -2400,9 +2414,16 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
         tile = vector.TransferReadOp(
             target_ty, op.base, indices_vs, load_map, padding)
       else:
+        assert s is not REPLICATED
         sublane_mask = ir.DenseBoolArrayAttr.get(
             [True] * TARGET_SHAPE.sublanes)
-        tile = tpu.LoadOp(target_ty, op.base, indices_vs, sublane_mask)
+        tile = tpu.LoadOp(
+            target_ty,
+            op.base,
+            indices_vs,
+            sublane_mask,
+            sublane_stride=sublane_stride,
+        )
     tiles[tile_ixs] = tile
   return ctx.replace(op, assemble(ty, layout_out, tiles))
 
@@ -2418,8 +2439,15 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
   if to_store_layout.implicit_dim == ImplicitDim.MINOR:
     raise NotImplementedError
   is_1d = to_store_layout.implicit_dim is not None
-  if to_store_layout.tiling != get_memref_tiling(op.base):
-    raise NotImplementedError
+  memref_tiling = get_memref_tiling(op.base)
+  if to_store_layout.tiling != memref_tiling:
+    # Now we can handle the case when tiling is (1, memref_tiling[1]).
+    # TODO(b/295393167): need to support strided store for bitwidth < 32.
+    if to_store_layout.bitwidth != 32 or to_store_layout.tiling != (
+        1,
+        memref_tiling[1],
+    ):
+      raise NotImplementedError
   base_indices = [get_int_const(v, "vector.store index") for v in op.indices]
   tiles = disassemble(to_store_layout, op.valueToStore)
   if is_1d:
@@ -2432,8 +2460,12 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
   check(lane_offset is not REPLICATED and sublane_offset is not REPLICATED,
         "replicated layout disallowed in vector store")
   stored_shape = to_store_layout.implicit_shape(tuple(ty.shape))
+  sublane_stride = 1
+  # The stride of store should be the number of sublanes in memref tile when
+  # store a single sublane.
+  if to_store_layout.bitwidth == 32 and stored_shape[-2] == 1:
+    sublane_stride = memref_tiling[0]
   vreg_slice = to_store_layout.vreg_slice
-  can_use_vector_store = to_store_layout.has_natural_topology
   for ixs, tile in np.ndenumerate(tiles):
     bounds = to_store_layout.tile_data_bounds(stored_shape, ixs)
     *batch_ixs, six, lix = ixs
@@ -2470,13 +2502,26 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
               tile.type, arith.OrIOp(masked_data, masked_tile))
         else:
           updated = arith.SelectOp(mask, tile, data)
-        tpu.StoreOp(updated, op.base, indices, sublane_mask)
+        tpu.StoreOp(
+            updated,
+            op.base,
+            indices,
+            sublane_mask,
+            sublane_stride=sublane_stride,
+        )
       else:
-        tpu.StoreOp(tile, op.base, indices, sublane_mask, mask=mask)
-    elif bounds.mask_varies_along(SUBLANES) or not can_use_vector_store:
-      tpu.StoreOp(tile, op.base, indices, sublane_mask)
+        tpu.StoreOp(
+            tile,
+            op.base,
+            indices,
+            sublane_mask,
+            mask=mask,
+            sublane_stride=sublane_stride,
+        )
     else:
-      vector.StoreOp(tile, op.base, indices)
+      tpu.StoreOp(
+          tile, op.base, indices, sublane_mask, sublane_stride=sublane_stride
+      )
   return ctx.erase(op)
 
 
