@@ -181,16 +181,17 @@ def make_gpu_client(
 
 
 if hasattr(xla_client, "make_gpu_client"):
-  register_backend_factory(
-      "cuda",
-      partial(
-          make_gpu_client,
-          platform_name="cuda",
-          visible_devices_flag=CUDA_VISIBLE_DEVICES,
-      ),
-      priority=200,
-      fail_quietly=True,
-  )
+  if jax_plugins is None or 'cuda' not in jax_plugins:
+    register_backend_factory(
+        "cuda",
+        partial(
+            make_gpu_client,
+            platform_name="cuda",
+            visible_devices_flag=CUDA_VISIBLE_DEVICES,
+        ),
+        priority=200,
+        fail_quietly=True,
+    )
   register_backend_factory(
       "rocm",
       partial(
