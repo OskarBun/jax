@@ -225,7 +225,7 @@ def write_bazelrc(*, python_bin_path, remote_build,
                   cpu, cuda_compute_capabilities,
                   rocm_amdgpu_targets, bazel_options, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, enable_cuda, enable_nccl,
-                  enable_tpu, enable_rocm):
+                  enable_tpu, enable_rocm, build_gpu_plugin):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
@@ -292,6 +292,10 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write("build --config=rocm\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
+    if build_gpu_plugin:
+      f.write(textwrap.dedent("""\
+        build --noincompatible_remove_legacy_whole_archive
+        """))
 
 BANNER = r"""
      _   _  __  __
@@ -369,6 +373,16 @@ def main():
       parser,
       "enable_cuda",
       help_str="Should we build with CUDA enabled? Requires CUDA and CuDNN.")
+  add_boolean_argument(
+      parser,
+      "build_gpu_plugin",
+      default=False,
+      help_str="Are we building the gpu plugin?")
+  parser.add_argument(
+      "--gpu_plugin_cuda_version",
+      choices=["11", "12"],
+      default="12",
+      help="Which CUDA major version the gpu plugin is for.")
   add_boolean_argument(
       parser,
       "enable_tpu",
@@ -535,6 +549,7 @@ def main():
       enable_nccl=args.enable_nccl,
       enable_tpu=args.enable_tpu,
       enable_rocm=args.enable_rocm,
+      build_gpu_plugin=args.build_gpu_plugin,
   )
 
   if args.configure_only:
@@ -543,11 +558,17 @@ def main():
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
 
 
+  if args.build_gpu_plugin:
+    build_wheel = "//jaxlib/tools:build_gpu_plugin_wheel"
+  else:
+    build_wheel = "//jaxlib/tools:build_wheel"
   command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] +
-    ["//jaxlib/tools:build_wheel", "--",
+    [f"{build_wheel}", "--",
     f"--output_path={output_path}",
     f"--cpu={wheel_cpu}"])
+  if args.build_gpu_plugin:
+    command += [f"--cuda_version={args.gpu_plugin_cuda_version}"]
   if args.editable:
     command += ["--editable"]
   print(" ".join(command))
