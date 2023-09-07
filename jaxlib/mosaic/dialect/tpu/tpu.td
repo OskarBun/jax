@@ -113,8 +113,11 @@ def TPU_TiledLayoutAttr
 
 def TPU_MemorySpace : I32EnumAttr<"MemorySpace", "Memory space", [
   I32EnumAttrCase<"kAny", 4294967295, "any">,
+  // TODO(apaszke): Rename to kXYZ in C++
   I32EnumAttrCase<"vmem", 0, "vmem">,
-  I32EnumAttrCase<"smem", 1, "smem">
+  I32EnumAttrCase<"smem", 1, "smem">,
+  I32EnumAttrCase<"kHbm", 2, "hbm">,
+  I32EnumAttrCase<"kCmem", 3, "cmem">
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
@@ -410,6 +413,14 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma"> {
     AnyMemRef:$target,
     TPU_DMASemaphoreType:$target_semaphore,
     Optional<I32>:$device_id
+  );
+}
+
+def TPU_EnqueueDMALocalOp : TPU_Op<"enqueue_dma_local"> {
+  let arguments = (ins
+    AnyMemRef:$source,
+    AnyMemRef:$target,
+    TPU_DMASemaphoreType:$target_semaphore
   );
 }
 

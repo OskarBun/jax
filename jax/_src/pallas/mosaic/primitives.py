@@ -27,6 +27,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.pallas import indexing
 from jax._src.pallas.mosaic import core as tpu_core
 import jax.numpy as jnp
 
@@ -146,4 +147,35 @@ def _semaphore_wait_abstract_eval(sem_aval: tpu_core.AbstractSemaphore, value):
     raise ValueError("Must wait a REGULAR semaphore.")
   if value.dtype != jnp.dtype("int32"):
     raise ValueError("Must signal an int32 value.")
+  return []
+
+
+dma_start_p = jax_core.Primitive('dma_start')
+dma_start_p.multiple_results = True
+
+@dma_start_p.def_abstract_eval
+def _dma_start_abstract_eval(*args, tree):
+  del args, tree
+  return []
+
+def dma_start(src_ref, src_indices, dst_ref, dst_indices, sem,
+              src_sem=None, device_id=None):
+  src_indexer = indexing.NDIndexer.from_indices_shape(src_indices,
+                                                      src_ref.shape)
+  dst_indexer = indexing.NDIndexer.from_indices_shape(dst_indices,
+                                                      dst_ref.shape)
+  args = (src_ref, src_indexer, dst_ref, dst_indexer, sem, src_sem, device_id)
+  flat_args, tree = tree_util.tree_flatten(args)
+  dma_start_p.bind(*flat_args, tree=tree)
+  def _wait_fn():
+    dma_wait_p.bind(*flat_args, tree=tree)
+  return _wait_fn
+
+
+dma_wait_p = jax_core.Primitive('dma_wait')
+dma_wait_p.multiple_results = True
+
+@dma_wait_p.def_abstract_eval
+def _dma_wait_abstract_eval(*args, tree):
+  del args, tree
   return []
