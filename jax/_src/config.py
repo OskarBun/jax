@@ -1123,6 +1123,13 @@ jax_xla_profile_version = config.define_int_state(
           'profile feature.')
 )
 
+enable_jax_compilation_cache = config.define_bool_state(
+    name='enable_jax_compilation_cache',
+    default=False,
+    help=('Not used at the moment. Will be used in future to control whether '
+          'the compilation cache is enabled.')
+)
+
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:
   """Indicates that the current context is an explicit device_put*() call."""

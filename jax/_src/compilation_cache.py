@@ -37,6 +37,12 @@ logger = logging.getLogger(__name__)
 _cache: Optional[CacheInterface] = None
 
 
+# Not used at the moment. This function will be used/overridden later to get the
+# default path for the repository.
+def get_repository_path() -> Optional[str]:
+  return None
+
+
 def initialize_cache(path):
   """Creates a global cache object.
 
