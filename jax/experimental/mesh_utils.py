@@ -222,25 +222,36 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
       v2 and v3, global_z is instead cores_per_chip (i.e., 2).
   """
   device_kind = jax_devices[0].device_kind
-  device_coords = [d.coords for d in jax_devices]
-  dims = tuple(d + 1 for d in max(device_coords))
+  global_coords = tuple(d.coords for d in jax_devices)
+  scoped_coords = tuple(list(set(dim_coords)) for dim_coords in np.array(global_coords).T)
+  global_to_scoped = tuple({
+      dim: i
+      for i, dim in enumerate(axis)
+  } for axis in scoped_coords)
+  dims = tuple(len(coords) for coords in scoped_coords)
   assert len(dims) == 3, dims
   if device_kind in (_TPU_V2, _TPU_V3):
     cores_per_chip = max(d.core_on_chip for d in jax_devices) + 1
     out = np.empty(dims[:2] + (cores_per_chip,), dtype=object)
-    for coords, d in zip(device_coords, jax_devices):
+    for coords, d in zip(global_coords, jax_devices):
       assert coords[2] == 0, d
-      out[coords[0], coords[1], d.core_on_chip] = d
+      out[global_to_scoped[0][coords[0]],
+          global_to_scoped[1][coords[1]],
+          d.core_on_chip
+          ] = d
   else:
     out = np.empty(dims, dtype=object)
-    for coords, d in zip(device_coords, jax_devices):
+    for coords, d in zip(global_coords, jax_devices):
       if d.core_on_chip != 0:
         raise AssertionError(
             'Creating meshes for TPU >v3 requires one device per chip'
             f' ("megacore" mode). Got device id {d.core_on_chip} for a device'
             f' of kind {device_kind}: {d}.'
         )
-      out[coords[0], coords[1], coords[2]] = d
+      out[global_to_scoped[0][coords[0]],
+          global_to_scoped[1][coords[1]],
+          global_to_scoped[2][coords[2]],
+          ] = d
   return out
 
 
